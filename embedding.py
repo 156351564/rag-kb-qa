@@ -10,19 +10,38 @@ from openai import OpenAI
 
 from config import EMBED_API_KEY, EMBED_BASE_URL, EMBED_MODEL
 
-_client = OpenAI(api_key=EMBED_API_KEY, base_url=EMBED_BASE_URL)
+import time
 
-BATCH = 10  # 通义 text-embedding-v3 单请求上限
+_client = OpenAI(api_key=EMBED_API_KEY, base_url=EMBED_BASE_URL, timeout=60.0)
+
+BATCH = 10   # 通义 text-embedding-v3 单请求上限
+RETRIES = 3  # 网络抖动重试次数
+
+
+def _embed_batch(batch: list[str]) -> list[list[float]]:
+    """单批请求，带指数退避重试。
+
+    为什么要重试：embedding 是外部依赖，超时和 5xx 是常态。
+    入库脚本跑到一半失败，重跑整个文档代价很大（前面的 token 白花），
+    所以在批级别重试是最划算的粒度。
+    """
+    last: Exception | None = None
+    for attempt in range(RETRIES):
+        try:
+            resp = _client.embeddings.create(model=EMBED_MODEL, input=batch)
+            return [d.embedding for d in sorted(resp.data, key=lambda d: d.index)]
+        except Exception as e:
+            last = e
+            if attempt < RETRIES - 1:
+                time.sleep(1.5 * (attempt + 1))  # 1.5s、3s 递增
+    raise RuntimeError(f"embedding 连续失败 {RETRIES} 次：{last}") from last
 
 
 def embed(texts: list[str]) -> list[list[float]]:
     """把一批文本转成向量，顺序与输入一致。"""
     vectors: list[list[float]] = []
     for i in range(0, len(texts), BATCH):
-        batch = texts[i : i + BATCH]
-        resp = _client.embeddings.create(model=EMBED_MODEL, input=batch)
-        # resp.data 的顺序和输入顺序一致，但保险起见按 index 排序
-        vectors.extend([d.embedding for d in sorted(resp.data, key=lambda d: d.index)])
+        vectors.extend(_embed_batch(texts[i : i + BATCH]))
     return vectors
 
 

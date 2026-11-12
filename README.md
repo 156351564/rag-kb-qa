@@ -68,13 +68,15 @@ fixed 的 top-1 命中率反而更高，原因是**块更大，装的东西更�
 ```
 rag-service/
 ├── config.py        # 所有环境变量集中一处
-├── embedding.py     # 通义 embedding 封装（分批）
+├── embedding.py     # 通义 embedding 封装（分批 + 重试）
 ├── chunker.py       # 两套切分策略
-├── kb.py            # 知识库核心层：入库 / 检索 / 统计
+├── kb.py            # 知识库核心层：入库 / 检索 / 统计 / 文档列表
 ├── ingest.py        # CLI：批量入库 docs/
 ├── ask.py           # CLI：单次问答（可只看检索）
 ├── eval.py          # 10 条评测，对比两种切分
-├── app.py           # FastAPI：异步入库 + job 轮询 + 流式问答
+├── app.py           # FastAPI：异步入库 + job 轮询 + 流式问答 + 提供页面
+├── static/
+│   └── index.html   # 单页界面（原生 JS 解 SSE 帧）
 └── docs/            # 测试文档（3 篇，取自项目一的技术笔记）
 ```
 
@@ -100,16 +102,33 @@ python ask.py "中断为什么要传到最底层" --strategy heading --answer
 # 5. 评测
 python eval.py
 
-# 6. 起服务
+# 6. 起服务（同时提供页面和接口）
 python -m uvicorn app:app --host 127.0.0.1 --port 8123
+# 浏览器打开 http://127.0.0.1:8123
 ```
+
+## 页面
+
+单页界面由 FastAPI 直接提供（`static/index.html`），一个进程搞定：
+
+- 左侧：入库（选切分策略）+ 进度条轮询 + 已入库文档列表
+- 右侧：提问 → 引用卡片先出现 → 逐字生成 → 首字/总耗时打点
+
+**为什么不做成独立的 Next 项目**：Vercel 跑不了常驻的 Python 服务，
+页面和接口分两个域名部署，线上就会出现「页面能开、接口 404」。
+内嵌成一个进程，演示时不会有这个问题。
+
+前端解 SSE 帧用的是 `fetch + ReadableStream`：累积 buffer，按双换行切分，
+剩余的留到下次读取。**不能假设一次 read 拿到完整帧** —— 网络分包会把一帧切开。
 
 ## 接口
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
+| GET | `/` | 单页界面 |
 | GET | `/health` | 存活检查 |
 | GET | `/api/kb/stats` | 当前块数 |
+| GET | `/api/kb/sources` | 已入库文档列表（按文档 + 策略聚合块数） |
 | POST | `/api/ingest` | **异步入库**，返回 `job_id` |
 | GET | `/api/jobs/{id}` | 轮询进度（queued / running / done / failed） |
 | POST | `/api/ask` | **SSE 流式问答**，先推引用再推正文 |
@@ -191,6 +210,16 @@ sys.stdout.reconfigure(encoding="utf-8")
 改成块级判断——检查召回的块里到底有没有答案关键词——才看出真实差异在相似度和排序精度上。
 
 **教训：指标选错，实验等于白做。** 而"指标选错"往往发生在指标看起来合理的时候。
+
+### ⑤ 入库到一半超时，前面的钱白花
+
+第一次跑 `ingest.py heading`，14 个块分 2 批请求，第二批超时直接抛 `APITimeoutError`，
+整个入库失败。
+
+加了批级重试（3 次，1.5s / 3s 退避）后解决。**为什么在批级别重试而不是文档级别**：
+已经成功的批次不必重跑，重试粒度越细，浪费越少。
+
+同时入库用的 `upsert` + 稳定 id 是幂等的，所以重试不会产生重复块。
 
 ---
 

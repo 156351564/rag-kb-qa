@@ -68,3 +68,20 @@ def retrieve(question: str, strategy: str | None = None, k: int = 4) -> list[dic
 def stats() -> dict:
     col = get_collection()
     return {"collection": col.name, "chunks": col.count()}
+
+
+def sources() -> list[dict]:
+    """按文档聚合块数，给前端文档列表用。
+
+    为什么用 get() 全量拉而不是 query：
+    这里是要"列出所有文档"，没有查询语义，向量检索反而不适用。
+    20 个块全量拉没问题；如果到几万块，应该单独存一张元数据表，
+    而不是把向量库当数据库用 —— 这是向量库的常见误用。
+    """
+    col = get_collection()
+    data = col.get(include=["metadatas"])
+    counts: dict[str, int] = {}
+    for meta in data["metadatas"] or []:
+        key = f"{meta['source']}｜{meta['strategy']}"
+        counts[key] = counts.get(key, 0) + 1
+    return [{"doc": k, "chunks": v} for k, v in sorted(counts.items())]

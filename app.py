@@ -22,7 +22,8 @@ import uuid
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from pathlib import Path
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
@@ -76,6 +77,25 @@ def health():
 @app.get("/api/kb/stats")
 def kb_stats():
     return {"ok": True, **kb.stats()}
+
+
+@app.get("/api/kb/sources")
+def kb_sources():
+    return {"ok": True, "items": kb.sources()}
+
+
+@app.get("/")
+def index():
+    """前端页面直接由 FastAPI 提供。
+
+    为什么不做成独立的 Next 项目：
+    Vercel 跑不了常驻的 Python 服务，页面和接口分两个域名部署，
+    线上就会出现"页面能开、接口 404"。内嵌成一个进程，演示时不会有这个问题。
+    """
+    page = Path(__file__).parent / "static" / "index.html"
+    if not page.exists():
+        raise HTTPException(status_code=404, detail="static/index.html 不存在")
+    return FileResponse(page, media_type="text/html; charset=utf-8")
 
 
 # ---------------- 异步入库 ----------------

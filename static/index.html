@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>知识库问答 · RAG</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  .stream-text { white-space: pre-wrap; word-break: break-word; }
+  .cite { transition: all .15s ease; }
+  .cite:hover { border-color: #14304f; background: #f8fafc; }
+</style>
+</head>
+<body class="bg-neutral-50 text-neutral-900">
+<div class="mx-auto max-w-6xl px-4 py-6 sm:px-6">
+
+  <!-- 头部 -->
+  <header class="mb-5 flex flex-wrap items-end justify-between gap-3">
+    <div>
+      <p class="text-xs tracking-widest text-neutral-400">RAG · 检索增强生成</p>
+      <h1 class="mt-1 text-xl font-semibold">知识库问答</h1>
+      <p class="mt-1 text-xs text-neutral-500">
+        文档入库 → 向量检索 → 带引用的流式回答。检索不到就明确拒答，不让模型硬编。
+      </p>
+    </div>
+    <div class="flex items-center gap-2 text-xs">
+      <span id="kbStat" class="rounded-full border border-neutral-200 bg-white px-3 py-1 text-neutral-600">加载中…</span>
+      <span class="rounded-full border border-neutral-200 bg-white px-3 py-1 text-neutral-600">
+        阈值 <b class="text-neutral-800">0.30</b>
+      </span>
+    </div>
+  </header>
+
+  <div class="grid gap-4 lg:grid-cols-[360px_1fr]">
+
+    <!-- 左：入库 + 文档列表 -->
+    <section class="space-y-4">
+      <div class="rounded-lg border border-neutral-200 bg-white p-4">
+        <h2 class="mb-3 text-sm font-semibold text-neutral-700">① 入库文档</h2>
+
+        <label class="mb-1 block text-xs text-neutral-500">文档名（会显示在引用里）</label>
+        <input id="docName" placeholder="例如：流式输出笔记"
+               class="mb-3 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-500">
+
+        <label class="mb-1 block text-xs text-neutral-500">正文（Markdown，支持 # 标题）</label>
+        <textarea id="docText" rows="7" placeholder="# 标题&#10;&#10;## 小节&#10;正文内容…"
+                  class="mb-3 w-full resize-y rounded-md border border-neutral-300 px-3 py-2 font-mono text-xs outline-none focus:border-neutral-500"></textarea>
+
+        <div class="mb-3 flex items-center gap-2">
+          <label class="text-xs text-neutral-500">切分策略</label>
+          <select id="strategy" class="rounded-md border border-neutral-300 px-2 py-1 text-xs">
+            <option value="heading">heading（按标题）</option>
+            <option value="fixed">fixed（固定窗 500/80）</option>
+          </select>
+        </div>
+
+        <button id="btnIngest"
+                class="w-full rounded-md bg-neutral-900 px-3 py-2 text-sm text-white transition hover:bg-neutral-700 disabled:opacity-50">
+          提交入库
+        </button>
+
+        <div id="jobBox" class="mt-3 hidden">
+          <div class="mb-1 flex justify-between text-[11px] text-neutral-500">
+            <span id="jobMsg">排队中</span><span id="jobPct">0%</span>
+          </div>
+          <div class="h-1.5 overflow-hidden rounded-full bg-neutral-100">
+            <div id="jobBar" class="h-full w-0 bg-neutral-900 transition-all duration-300"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="rounded-lg border border-neutral-200 bg-white p-4">
+        <div class="mb-2 flex items-center justify-between">
+          <h2 class="text-sm font-semibold text-neutral-700">② 已入库</h2>
+          <button id="btnRefresh" class="text-[11px] text-neutral-500 hover:text-neutral-900">刷新</button>
+        </div>
+        <ul id="docList" class="space-y-1 text-xs text-neutral-600">
+          <li class="text-neutral-400">加载中…</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- 右：问答 -->
+    <section class="rounded-lg border border-neutral-200 bg-white p-4">
+      <h2 class="mb-3 text-sm font-semibold text-neutral-700">③ 提问</h2>
+
+      <div class="mb-3 flex gap-2">
+        <input id="question" placeholder="例如：为什么配额要按金额而不是按次数？"
+               class="flex-1 rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-500">
+        <button id="btnAsk"
+                class="rounded-md bg-neutral-900 px-4 py-2 text-sm text-white transition hover:bg-neutral-700 disabled:opacity-50">
+          提问
+        </button>
+      </div>
+
+      <div class="mb-2 flex flex-wrap gap-1.5" id="samples"></div>
+
+      <!-- 引用 -->
+      <div id="citeBox" class="mb-3 hidden">
+        <p class="mb-1.5 text-[11px] font-medium text-neutral-500">
+          引用来源 · <span id="citeBest" class="text-neutral-400"></span>
+        </p>
+        <div id="citeList" class="grid gap-1.5 sm:grid-cols-2"></div>
+      </div>
+
+      <!-- 回答 -->
+      <div class="rounded-md border border-neutral-200 bg-neutral-50/60 p-3">
+        <div id="answer" class="stream-text min-h-[120px] text-sm leading-relaxed text-neutral-800">
+          <span class="text-neutral-400">回答会逐字出现在这里。</span>
+        </div>
+      </div>
+
+      <div class="mt-2 flex items-center justify-between text-[11px] text-neutral-400">
+        <span id="statusText">就绪</span>
+        <span id="timing"></span>
+      </div>
+    </section>
+  </div>
+
+  <footer class="mt-6 border-t border-neutral-200 pt-3 text-[11px] text-neutral-400">
+    FastAPI + Chroma + 通义 text-embedding-v3 ｜ 前端原生 JS 解 SSE 帧（buffer + 双换行切分）
+  </footer>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const SAMPLES = [
+  "为什么配额要按金额而不是按次数",
+  "中断为什么要传到最底层",
+  "tool_calls 里的 arguments 是什么类型",
+  "公司食堂几点开门"
+];
+
+// ---------- 工具 ----------
+async function jget(url) {
+  const r = await fetch(url);
+  return r.json();
+}
+async function jpost(url, body) {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  return r.json();
+}
+
+// ---------- ① 状态与文档列表 ----------
+async function loadStats() {
+  try {
+    const s = await jget("/api/kb/stats");
+    $("kbStat").innerHTML = `当前 <b class="text-neutral-800">${s.chunks}</b> 个块`;
+  } catch { $("kbStat").textContent = "接口不可用"; }
+}
+async function loadDocs() {
+  try {
+    const res = await jget("/api/kb/sources");
+    const items = res.items || [];
+    if (!items.length) {
+      $("docList").innerHTML = '<li class="text-neutral-400">还没有文档，先入库一篇</li>';
+      return;
+    }
+    $("docList").innerHTML = items.map(it => {
+      const [doc, strat] = it.doc.split("｜");
+      return `<li class="flex justify-between gap-2 border-b border-neutral-100 pb-1">
+        <span class="truncate">${doc}</span>
+        <span class="shrink-0 text-neutral-400">${strat} · ${it.chunks} 块</span>
+      </li>`;
+    }).join("");
+  } catch {
+    $("docList").innerHTML = '<li class="text-neutral-400">加载失败</li>';
+  }
+}
+
+// ---------- ② 异步入库 ----------
+async function doIngest() {
+  const source = $("docName").value.trim();
+  const text = $("docText").value.trim();
+  if (!source || !text) { alert("文档名和正文都要填"); return; }
+
+  $("btnIngest").disabled = true;
+  $("jobBox").classList.remove("hidden");
+  $("jobBar").style.width = "5%";
+  $("jobMsg").textContent = "提交中…";
+  $("jobPct").textContent = "5%";
+
+  try {
+    const res = await jpost("/api/ingest", {
+      source, text, strategy: $("strategy").value
+    });
+    if (!res.job_id) throw new Error(res.detail || "提交失败");
+
+    // 轮询：入库是慢操作，接口立刻返回 job_id，这里查进度
+    let tries = 0;
+    while (tries++ < 60) {
+      await new Promise(r => setTimeout(r, 800));
+      const job = await jget(`/api/jobs/${res.job_id}`);
+      $("jobBar").style.width = (job.progress || 0) + "%";
+      $("jobPct").textContent = (job.progress || 0) + "%";
+      $("jobMsg").textContent = job.message || job.status;
+      if (job.status === "done") {
+        $("jobMsg").textContent = `完成，写入 ${job.chunks} 块`;
+        await loadStats(); await loadDocs();
+        $("docText").value = "";
+        break;
+      }
+      if (job.status === "failed") break;
+    }
+  } catch (e) {
+    $("jobMsg").textContent = "失败：" + e.message;
+  } finally {
+    $("btnIngest").disabled = false;
+  }
+}
+
+// ---------- ③ 流式问答 ----------
+function parseFrame(frame) {
+  let ev = "message", data = null;
+  for (const line of frame.split("\n")) {
+    if (line.startsWith("event: ")) ev = line.slice(7).trim();
+    else if (line.startsWith("data: ")) {
+      try { data = JSON.parse(line.slice(6)); } catch { }
+    }
+  }
+  return { ev, data };
+}
+
+async function doAsk(q) {
+  const question = (q || $("question").value).trim();
+  if (!question) return;
+
+  $("btnAsk").disabled = true;
+  $("answer").innerHTML = '<span class="text-neutral-400">检索中…</span>';
+  $("citeBox").classList.add("hidden");
+  $("citeList").innerHTML = "";
+  $("statusText").textContent = "请求中";
+  $("timing").textContent = "";
+
+  const t0 = performance.now();
+  let firstAt = 0, acc = "";
+
+  try {
+    const res = await fetch("/api/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question })
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buf = "";
+
+    // 解 SSE 帧：和项目一同样的做法 —— 累积 buffer，按双换行切，剩下的留到下次。
+    // 不能假设一次 read 拿到完整帧，网络分包会把一帧拆开。
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const { ev, data } = parseFrame(frame);
+        if (!data) continue;
+
+        if (ev === "citations") {
+          $("citeBox").classList.remove("hidden");
+          $("citeBest").textContent = "最高相似度 " + Number(data.best).toFixed(3);
+          $("citeList").innerHTML = (data.citations || []).map(c => {
+            const low = c.sim < 0.3;
+            const tone = low ? "border-neutral-200" : "border-emerald-200";
+            return `<div class="cite rounded-md border ${tone} bg-white px-2.5 py-2">
+              <div class="mb-0.5 flex items-center justify-between gap-2">
+                <span class="truncate text-[11px] font-medium text-neutral-700">[${c.index}] ${c.source} · #${c.chunk}</span>
+                <span class="shrink-0 text-[10px] ${low ? "text-neutral-400" : "text-emerald-600"}">${Number(c.sim).toFixed(3)}</span>
+              </div>
+              <p class="line-clamp-2 text-[10px] leading-snug text-neutral-500">${c.preview}…</p>
+            </div>`;
+          }).join("");
+          $("statusText").textContent = "生成中";
+        } else if (ev === "delta") {
+          if (!firstAt) firstAt = performance.now();
+          acc += data.text;
+          $("answer").textContent = acc;
+        } else if (ev === "done") {
+          $("statusText").textContent = data.reason === "low_similarity"
+            ? "已拒答（检索不到相关内容）" : "完成";
+        } else if (ev === "error") {
+          $("statusText").textContent = "出错：" + data.message;
+        }
+      }
+    }
+    const total = performance.now() - t0;
+    $("timing").textContent = firstAt
+      ? `首字 ${Math.round(firstAt - t0)} ms ｜ 总 ${Math.round(total)} ms`
+      : `总 ${Math.round(total)} ms`;
+  } catch (e) {
+    $("answer").textContent = "请求失败：" + e.message;
+    $("statusText").textContent = "失败";
+  } finally {
+    $("btnAsk").disabled = false;
+  }
+}
+
+// ---------- 绑定 ----------
+$("btnIngest").onclick = doIngest;
+$("btnRefresh").onclick = () => { loadStats(); loadDocs(); };
+$("btnAsk").onclick = () => doAsk();
+$("question").addEventListener("keydown", e => { if (e.key === "Enter") doAsk(); });
+$("samples").innerHTML = SAMPLES.map(s =>
+  `<button class="rounded-full border border-neutral-200 px-2.5 py-1 text-[11px] text-neutral-500 hover:border-neutral-400 hover:text-neutral-800">${s}</button>`
+).join("");
+[...$("samples").children].forEach((btn, i) => {
+  btn.onclick = () => { $("question").value = SAMPLES[i]; doAsk(SAMPLES[i]); };
+});
+
+loadStats();
+loadDocs();
+</script>
+</body>
+</html>
