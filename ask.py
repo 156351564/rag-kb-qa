@@ -17,7 +17,6 @@ import sys
 # 在脚本入口把 stdout 改成 UTF-8，比每次设环境变量省事。
 sys.stdout.reconfigure(encoding="utf-8")
 
-import chromadb  # noqa: F401  (kb 内部用，这里保留导入便于直接跑脚本)
 from openai import OpenAI
 
 from config import CHAT_API_KEY, CHAT_BASE_URL, CHAT_MODEL
