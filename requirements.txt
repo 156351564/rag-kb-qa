@@ -1,0 +1,6 @@
+﻿chromadb==1.5.9
+fastapi==0.162.5
+openai==3.49.0
+pydantic==2.14.3
+python-dotenv==1.2.4
+uvicorn==0.54.0
